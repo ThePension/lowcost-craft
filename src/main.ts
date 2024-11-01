@@ -163,7 +163,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
 
   atlasTexture = await ShaderHelper.loadAtlasTexture(
     device,
-    "./basic_atlas.png"
+    "basic_atlas.png"
   );
 
   sampler = device.createSampler({
@@ -200,11 +200,11 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
 
   const vertexShaderModule = await ShaderHelper.loadShaderModuleFromFile(
     device,
-    "./shaders/vertex.wgsl"
+    "shaders/vertex.wgsl"
   );
   const fragmentShaderModule = await ShaderHelper.loadShaderModuleFromFile(
     device,
-    "./shaders/fragment.wgsl"
+    "shaders/fragment.wgsl"
   );
 
   function updateViewMatrix() {
