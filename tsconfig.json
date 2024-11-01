@@ -3,6 +3,7 @@
     "target": "ES2022", 
     "useDefineForClassFields": true,
     "module": "ESNext",
+    "baseUrl": "/lowcost-craft",
     "lib": ["ESNext"],
     "skipLibCheck": true,
 
