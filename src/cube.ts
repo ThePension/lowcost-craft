@@ -21,42 +21,44 @@ export class Cube {
 
   // prettier-ignore
   static cubeVertices = new Float32Array([
+    // x,    y,    z,   u,   v,   nx,   ny,   nz
     // Avant
-    -0.5, -0.5,  0.5, 0.0, 1.0, // Bas gauche (inversé en Y)
-     0.5, -0.5,  0.5, 1.0, 1.0, // Bas droite (inversé en Y)
-     0.5,  0.5,  0.5, 1.0, 0.0, // Haut droite
-    -0.5,  0.5,  0.5, 0.0, 0.0, // Haut gauche
+    -0.5, -0.5,  0.5, 0.0, 1.0,  0.0,  0.0,  1.0, // Bas gauche, normale face avant
+     0.5, -0.5,  0.5, 1.0, 1.0,  0.0,  0.0,  1.0, // Bas droite
+     0.5,  0.5,  0.5, 1.0, 0.0,  0.0,  0.0,  1.0, // Haut droite
+    -0.5,  0.5,  0.5, 0.0, 0.0,  0.0,  0.0,  1.0, // Haut gauche
 
     // Arrière
-    -0.5, -0.5, -0.5, 0.0, 1.0, // Bas gauche (inversé en Y)
-     0.5, -0.5, -0.5, 1.0, 1.0, // Bas droite (inversé en Y)
-     0.5,  0.5, -0.5, 1.0, 0.0, // Haut droite
-    -0.5,  0.5, -0.5, 0.0, 0.0, // Haut gauche
+    -0.5, -0.5, -0.5, 0.0, 1.0,  0.0,  0.0, -1.0, // Bas gauche, normale face arrière
+     0.5, -0.5, -0.5, 1.0, 1.0,  0.0,  0.0, -1.0, // Bas droite
+     0.5,  0.5, -0.5, 1.0, 0.0,  0.0,  0.0, -1.0, // Haut droite
+    -0.5,  0.5, -0.5, 0.0, 0.0,  0.0,  0.0, -1.0, // Haut gauche
 
     // Haut
-    -0.5,  0.5,  0.5, -2.0, 0.0, // Avant gauche
-     0.5,  0.5,  0.5, -1.0, 0.0, // Avant droite
-     0.5,  0.5, -0.5, -1.0, 1.0, // Arrière droite
-    -0.5,  0.5, -0.5, -2.0, 1.0, // Arrière gauche
+    -0.5,  0.5,  0.5, -2.0, 0.0,  0.0,  1.0,  0.0, // Avant gauche
+     0.5,  0.5,  0.5, -1.0, 0.0,  0.0,  1.0,  0.0, // Avant droite
+     0.5,  0.5, -0.5, -1.0, 1.0,  0.0,  1.0,  0.0, // Arrière droite
+    -0.5,  0.5, -0.5, -2.0, 1.0,  0.0,  1.0,  0.0, // Arrière gauche
 
     // Bas
-    -0.5, -0.5,  0.5, 0.0, 1.0, // Avant gauche (inversé en Y)
-     0.5, -0.5,  0.5, 1.0, 1.0, // Avant droite (inversé en Y)
-     0.5, -0.5, -0.5, 1.0, 0.0, // Arrière droite
-    -0.5, -0.5, -0.5, 0.0, 0.0, // Arrière gauche
+    -0.5, -0.5,  0.5, 0.0, 1.0,  0.0, -1.0,  0.0, // Avant gauche
+     0.5, -0.5,  0.5, 1.0, 1.0,  0.0, -1.0,  0.0, // Avant droite
+     0.5, -0.5, -0.5, 1.0, 0.0,  0.0, -1.0,  0.0, // Arrière droite
+    -0.5, -0.5, -0.5, 0.0, 0.0,  0.0, -1.0,  0.0, // Arrière gauche
 
     // Droite
-     0.5, -0.5,  0.5, 0.0, 1.0, // Avant bas (inversé en Y)
-     0.5, -0.5, -0.5, 1.0, 1.0, // Arrière bas (inversé en Y)
-     0.5,  0.5, -0.5, 1.0, 0.0, // Arrière haut
-     0.5,  0.5,  0.5, 0.0, 0.0, // Avant haut
+     0.5, -0.5,  0.5, 0.0, 1.0,  1.0,  0.0,  0.0, // Avant bas
+     0.5, -0.5, -0.5, 1.0, 1.0,  1.0,  0.0,  0.0, // Arrière bas
+     0.5,  0.5, -0.5, 1.0, 0.0,  1.0,  0.0,  0.0, // Arrière haut
+     0.5,  0.5,  0.5, 0.0, 0.0,  1.0,  0.0,  0.0, // Avant haut
 
     // Gauche
-    -0.5, -0.5,  0.5, 1.0, 1.0, // Avant bas (inversé en Y)
-    -0.5, -0.5, -0.5, 0.0, 1.0, // Arrière bas (inversé en Y)
-    -0.5,  0.5, -0.5, 0.0, 0.0, // Arrière haut
-    -0.5,  0.5,  0.5, 1.0, 0.0, // Avant haut
-]);
+    -0.5, -0.5,  0.5, 1.0, 1.0, -1.0,  0.0,  0.0, // Avant bas
+    -0.5, -0.5, -0.5, 0.0, 1.0, -1.0,  0.0,  0.0, // Arrière bas
+    -0.5,  0.5, -0.5, 0.0, 0.0, -1.0,  0.0,  0.0, // Arrière haut
+    -0.5,  0.5,  0.5, 1.0, 0.0, -1.0,  0.0,  0.0  // Avant haut
+  ]);
+
 
 
   // prettier-ignore

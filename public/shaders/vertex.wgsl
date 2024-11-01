@@ -15,7 +15,8 @@ struct InstanceDatas {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>
+    @location(0) uv: vec2<f32>,
+    @location(1) normal: vec3<f32>
 };
 
 @group(1) @binding(1) var<storage, read> instanceDatas : InstanceDatas;
@@ -24,6 +25,7 @@ struct VertexOutput {
 fn vertexMain(
     @location(0) position: vec3<f32>,
     @location(1) localUV: vec2<f32>,
+    @location(2) normal: vec3<f32>,
     @builtin(instance_index) instanceIndex: u32
 ) -> VertexOutput {
     var output: VertexOutput;
@@ -32,7 +34,9 @@ fn vertexMain(
     output.position = uniforms.modelViewProjectionMatrix * modelMatrix * vec4<f32>(position, 1.0);
 
     let tileOffset = instanceDatas.data[instanceIndex].textureCoords;
-    let tileSize = vec2<f32>(0.0625, 0.0909); // Taille de chaque tuile dans l'atlas
+    let tileSize = vec2<f32>(1. / (1020. / 64.), 1. / (704. / 64.)); // Taille de chaque tuile dans l'atlas
+
+    output.normal = normalize((modelMatrix * vec4<f32>(normal, 0.0)).xyz);
 
     // Décale localement les UV en fonction de la tuile
     output.uv = (tileOffset * tileSize + localUV * tileSize);

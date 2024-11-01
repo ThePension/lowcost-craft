@@ -37,7 +37,7 @@ let sampler: GPUSampler;
 const worldWidth = 200;
 const worldMinHeight = -10;
 
-const amplitude = 10;      // Hauteur maximale en blocs
+const amplitude = 20;      // Hauteur maximale en blocs
 const frequency = 0.01;     // Fréquence du bruit (plus petit pour plus doux)
 
 for (let i = 0; i < worldWidth; i++) {
@@ -55,7 +55,22 @@ for (let i = 0; i < worldWidth; i++) {
     for (let k = worldMinHeight; k <= y; k++) {
       const position: vec3 = [x, k, z];
 
-      cubes.push(new Cube(position, [1, 1, 1], [4, 4]));
+      let textureCoords: vec2;
+
+      if (k === y) {
+        textureCoords = [4, 4]; // Herbe
+      } else if (k > y - 3) {
+        textureCoords = [2, 0]; // Terre
+      } else {
+        textureCoords = [1, 0]; // Pierre
+      }
+
+      cubes.push(new Cube(position, [1, 1, 1], textureCoords));
+    }
+
+    // If the lowest block is empty, fill it with stone
+    if (y < worldMinHeight) {
+      cubes.push(new Cube([x, worldMinHeight, z], [1, 1, 1], [2, 0]));
     }
   }
 }
@@ -212,10 +227,11 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
       entryPoint: "vertexMain",
       buffers: [
         {
-          arrayStride: 5 * 4,
+          arrayStride: 8 * 4, // Position (3) + UV (2) + Normale (3)
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x3" },
             { shaderLocation: 1, offset: 3 * 4, format: "float32x2" },
+            { shaderLocation: 2, offset: 5 * 4, format: "float32x3" }  // Normale
           ],
         },
       ],
@@ -261,7 +277,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
         {
           view: context.getCurrentTexture().createView(),
           loadOp: "clear",
-          clearValue: { r: 0.1, g: 0.1, b: 0.1, a: 1 },
+          clearValue: { r: 0.5, g: 0.8, b: 1.0, a: 1 },
           storeOp: "store",
         },
       ],
