@@ -2,7 +2,7 @@ import { mat4, vec2, vec3 } from "gl-matrix";
 import { Cube } from "./cube";
 import { Camera } from "./camera";
 import { ShaderHelper } from "./helpers/shader-helper";
-import { createNoise2D } from 'simplex-noise';
+import { createNoise2D } from "simplex-noise";
 
 /*
  * Variables declaration
@@ -37,8 +37,8 @@ let sampler: GPUSampler;
 const worldWidth = 200;
 const worldMinHeight = -10;
 
-const amplitude = 20;      // Hauteur maximale en blocs
-const frequency = 0.01;     // Fréquence du bruit (plus petit pour plus doux)
+const amplitude = 20; // Hauteur maximale en blocs
+const frequency = 0.01; // Fréquence du bruit (plus petit pour plus doux)
 
 for (let i = 0; i < worldWidth; i++) {
   for (let j = 0; j < worldWidth; j++) {
@@ -91,7 +91,7 @@ function initBuffers(device: GPUDevice) {
   for (let i = 0; i < cubes.length; i++) {
     const translate = mat4.create();
     mat4.translate(translate, translate, cubes[i].position);
-    
+
     instanceBufferData.set(cubes[i].modelMatrix, i * (4 * 4 + 2 + 2));
 
     instanceBufferData.set(cubes[i].textureCoords, i * (4 * 4 + 2 + 2) + 4 * 4);
@@ -136,37 +136,39 @@ function initBinding(device: GPUDevice) {
 
   textureBindGroupLayout = device.createBindGroupLayout({
     entries: [
-        {
-            binding: 0,
-            visibility: GPUShaderStage.FRAGMENT,
-            texture: { sampleType: 'float' },
-        },
-        {
-            binding: 1,
-            visibility: GPUShaderStage.FRAGMENT,
-            sampler: {},
-        },
+      {
+        binding: 0,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: { sampleType: "float" },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.FRAGMENT,
+        sampler: {},
+      },
     ],
-});
+  });
 
   textureBindGroup = device.createBindGroup({
     layout: textureBindGroupLayout,
     entries: [
-        { binding: 0, resource: atlasTexture.createView() },
-        { binding: 1, resource: sampler },
+      { binding: 0, resource: atlasTexture.createView() },
+      { binding: 1, resource: sampler },
     ],
-});
-
+  });
 }
 
 async function init(device: GPUDevice, context: GPUCanvasContext) {
   initBuffers(device);
 
-  atlasTexture = await ShaderHelper.loadAtlasTexture(device, './basic_atlas.png');
+  atlasTexture = await ShaderHelper.loadAtlasTexture(
+    device,
+    "./basic_atlas.png"
+  );
 
   sampler = device.createSampler({
-    magFilter: 'linear',
-    minFilter: 'linear',
+    magFilter: "linear",
+    minFilter: "linear",
   });
 
   initBinding(device);
@@ -220,7 +222,11 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
 
   const pipeline = device.createRenderPipeline({
     layout: device.createPipelineLayout({
-      bindGroupLayouts: [bindGroupLayout, instanceBindGroupLayout, textureBindGroupLayout],
+      bindGroupLayouts: [
+        bindGroupLayout,
+        instanceBindGroupLayout,
+        textureBindGroupLayout,
+      ],
     }),
     vertex: {
       module: vertexShaderModule,
@@ -231,7 +237,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x3" },
             { shaderLocation: 1, offset: 3 * 4, format: "float32x2" },
-            { shaderLocation: 2, offset: 5 * 4, format: "float32x3" }  // Normale
+            { shaderLocation: 2, offset: 5 * 4, format: "float32x3" }, // Normale
           ],
         },
       ],
@@ -316,7 +322,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
   requestAnimationFrame(render);
 }
 
-const infoElem = document.querySelector('#info');
+const infoElem = document.querySelector("#info");
 
 const canvas = document.querySelector("canvas");
 
@@ -331,23 +337,31 @@ const height = window.innerHeight;
 canvas.width = width;
 canvas.height = height;
 
-const adapter = await navigator.gpu.requestAdapter();
+let adapter: GPUAdapter | null;
 
-if (adapter === null) {
-  throw new Error("WebGPU not supported");
-}
+navigator.gpu.requestAdapter().then((gpuAdapter) => {
+  adapter = gpuAdapter;
 
-const device = await adapter.requestDevice();
+  if (adapter === null) {
+    throw new Error("WebGPU not supported");
+  }
 
-const context = canvas.getContext("webgpu");
+  let device: GPUDevice | null = null;
 
-if (context === null) {
-  throw new Error("WebGPU context not found");
-}
+  adapter.requestDevice().then((gpuDevice) => {
+    device = gpuDevice;
 
-context.configure({
-  device: device,
-  format: navigator.gpu.getPreferredCanvasFormat(),
+    const context = canvas.getContext("webgpu");
+
+    if (context === null) {
+      throw new Error("WebGPU context not found");
+    }
+
+    context.configure({
+      device: device,
+      format: navigator.gpu.getPreferredCanvasFormat(),
+    });
+
+    init(device, context);
+  });
 });
-
-init(device, context);
