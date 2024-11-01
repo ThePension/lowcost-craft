@@ -1,4 +1,4 @@
-import { mat4, vec3 } from "gl-matrix";
+import { mat4, vec2, vec3 } from "gl-matrix";
 import { Cube } from "./cube";
 import { Camera } from "./camera";
 import { ShaderHelper } from "./helpers/shader-helper";
@@ -15,6 +15,7 @@ const camera: Camera = new Camera();
 const uniformBufferSize = 16 * 4; // Taille de la matrice de transformation
 let uniformBuffer: GPUBuffer;
 let instanceBuffer: GPUBuffer;
+let vertexBuffer: GPUBuffer;
 
 let bindGroupLayout: GPUBindGroupLayout;
 let bindGroup: GPUBindGroup;
@@ -22,11 +23,18 @@ let bindGroup: GPUBindGroup;
 let instanceBindGroupLayout: GPUBindGroupLayout;
 let instanceBindGroup: GPUBindGroup;
 
+let textureBindGroupLayout: GPUBindGroupLayout;
+let textureBindGroup: GPUBindGroup;
+
 let depthTexture: GPUTexture;
 
 let cubes: Cube[] = [];
+let instanceBufferData: Float32Array;
 
-const worldWidth = 100;
+let atlasTexture: GPUTexture;
+let sampler: GPUSampler;
+
+const worldWidth = 200;
 const worldMinHeight = -10;
 
 const amplitude = 10;      // Hauteur maximale en blocs
@@ -46,19 +54,36 @@ for (let i = 0; i < worldWidth; i++) {
     // Remplir les blocs en dessous jusqu'à la hauteur minimale
     for (let k = worldMinHeight; k <= y; k++) {
       const position: vec3 = [x, k, z];
-      cubes.push(new Cube(position, [1, 1, 1], [1, 1, 1]));
+
+      cubes.push(new Cube(position, [1, 1, 1], [4, 4]));
     }
   }
 }
 
 function initBuffers(device: GPUDevice) {
+  instanceBufferData = new Float32Array(cubes.length * (4 * 4 + 2 + 2)); // 2 for padding
+
   uniformBuffer = device.createBuffer({
     size: uniformBufferSize,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 
+  vertexBuffer = device.createBuffer({
+    size: Cube.cubeVertices.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+
+  for (let i = 0; i < cubes.length; i++) {
+    const translate = mat4.create();
+    mat4.translate(translate, translate, cubes[i].position);
+    
+    instanceBufferData.set(cubes[i].modelMatrix, i * (4 * 4 + 2 + 2));
+
+    instanceBufferData.set(cubes[i].textureCoords, i * (4 * 4 + 2 + 2) + 4 * 4);
+  }
+
   instanceBuffer = device.createBuffer({
-    size: cubes.length * 4 * 16, // 16 floats par matrice de 4x4
+    size: instanceBufferData.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
 }
@@ -93,10 +118,42 @@ function initBinding(device: GPUDevice) {
     layout: instanceBindGroupLayout,
     entries: [{ binding: 1, resource: { buffer: instanceBuffer } }],
   });
+
+  textureBindGroupLayout = device.createBindGroupLayout({
+    entries: [
+        {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: 'float' },
+        },
+        {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: {},
+        },
+    ],
+});
+
+  textureBindGroup = device.createBindGroup({
+    layout: textureBindGroupLayout,
+    entries: [
+        { binding: 0, resource: atlasTexture.createView() },
+        { binding: 1, resource: sampler },
+    ],
+});
+
 }
 
 async function init(device: GPUDevice, context: GPUCanvasContext) {
   initBuffers(device);
+
+  atlasTexture = await ShaderHelper.loadAtlasTexture(device, './basic_atlas.png');
+
+  sampler = device.createSampler({
+    magFilter: 'linear',
+    minFilter: 'linear',
+  });
+
   initBinding(device);
 
   depthTexture = device.createTexture({
@@ -114,10 +171,8 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     100
   );
 
-  const vertexBuffer = device.createBuffer({
-    size: Cube.cubeVertices.byteLength,
-    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-  });
+  device.queue.writeBuffer(instanceBuffer, 0, instanceBufferData);
+
   device.queue.writeBuffer(vertexBuffer, 0, Cube.cubeVertices);
 
   const indexBuffer = device.createBuffer({
@@ -125,14 +180,6 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
   });
   device.queue.writeBuffer(indexBuffer, 0, Cube.cubeIndices);
-
-  for (let i = 0; i < cubes.length; i++) {
-    device.queue.writeBuffer(
-      instanceBuffer,
-      i * 4 * 16,
-      cubes[i].modelMatrix as Float32Array
-    );
-  }
 
   const vertexShaderModule = await ShaderHelper.loadShaderModuleFromFile(
     device,
@@ -158,17 +205,17 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
 
   const pipeline = device.createRenderPipeline({
     layout: device.createPipelineLayout({
-      bindGroupLayouts: [bindGroupLayout, instanceBindGroupLayout],
+      bindGroupLayouts: [bindGroupLayout, instanceBindGroupLayout, textureBindGroupLayout],
     }),
     vertex: {
       module: vertexShaderModule,
       entryPoint: "vertexMain",
       buffers: [
         {
-          arrayStride: 6 * 4,
+          arrayStride: 5 * 4,
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x3" },
-            { shaderLocation: 1, offset: 3 * 4, format: "float32x3" },
+            { shaderLocation: 1, offset: 3 * 4, format: "float32x2" },
           ],
         },
       ],
@@ -234,6 +281,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
 
     passEncoder.setBindGroup(0, bindGroup);
     passEncoder.setBindGroup(1, instanceBindGroup);
+    passEncoder.setBindGroup(2, textureBindGroup);
     passEncoder.drawIndexed(36, cubes.length, 0, 0, 0); // Dessine numCubes instances
     passEncoder.end();
 

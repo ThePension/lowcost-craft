@@ -1,24 +1,41 @@
 struct Uniforms {
-    modelViewProjectionMatrix : mat4x4<f32>
+    modelViewProjectionMatrix: mat4x4<f32>
 };
 @group(0) @binding(0) var<uniform> uniforms : Uniforms;
 
-struct VertexOutput {
-    @builtin(position) position : vec4<f32>,
-    @location(0) color : vec3<f32>
+struct InstanceData {
+    modelMatrix: mat4x4<f32>,
+    textureCoords: vec2<f32>, // Indices de tuile (x, y) dans l'atlas
+    _padding: vec2<f32>, // ajouter un padding pour alignement
 };
 
-@group(1) @binding(1) var<storage, read> instanceModels : array<mat4x4<f32>>;
+struct InstanceDatas {
+  data: array<InstanceData>
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>
+};
+
+@group(1) @binding(1) var<storage, read> instanceDatas : InstanceDatas;
 
 @vertex
-fn vertexMain(@location(0) position : vec3<f32>,
-                @location(1) color : vec3<f32>,
-                @builtin(instance_index) instanceIndex : u32) -> VertexOutput {
-    var output : VertexOutput;
+fn vertexMain(
+    @location(0) position: vec3<f32>,
+    @location(1) localUV: vec2<f32>,
+    @builtin(instance_index) instanceIndex: u32
+) -> VertexOutput {
+    var output: VertexOutput;
 
-    let modelMatrix = instanceModels[instanceIndex];
-
+    let modelMatrix = instanceDatas.data[instanceIndex].modelMatrix;
     output.position = uniforms.modelViewProjectionMatrix * modelMatrix * vec4<f32>(position, 1.0);
-    output.color = color;
+
+    let tileOffset = instanceDatas.data[instanceIndex].textureCoords;
+    let tileSize = vec2<f32>(0.0625, 0.0909); // Taille de chaque tuile dans l'atlas
+
+    // Décale localement les UV en fonction de la tuile
+    output.uv = (tileOffset * tileSize + localUV * tileSize);
+
     return output;
 }
