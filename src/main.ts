@@ -34,11 +34,14 @@ let instanceBufferData: Float32Array;
 let atlasTexture: GPUTexture;
 let sampler: GPUSampler;
 
-const worldWidth = 200;
+const worldWidth = 300;
 const worldMinHeight = -10;
 
 const amplitude = 20; // Hauteur maximale en blocs
 const frequency = 0.01; // Fréquence du bruit (plus petit pour plus doux)
+
+// Remplit le monde avec des cubes et utilise le masque de faces
+const world = new Map<string, Cube>();
 
 for (let i = 0; i < worldWidth; i++) {
   for (let j = 0; j < worldWidth; j++) {
@@ -65,39 +68,49 @@ for (let i = 0; i < worldWidth; i++) {
         textureCoords = [1, 0]; // Pierre
       }
 
-      cubes.push(new Cube(position, [1, 1, 1], textureCoords));
+      const cube = new Cube(position, [1, 1, 1], textureCoords, 0.);
+
+      world.set(`${x},${k},${z}`, cube);
+
+      cubes.push(cube);
     }
 
     // If the lowest block is empty, fill it with stone
     if (y < worldMinHeight) {
-      cubes.push(new Cube([x, worldMinHeight, z], [1, 1, 1], [2, 0]));
+      cubes.push(new Cube([x, worldMinHeight, z], [1, 1, 1], [2, 0], 0.));
     }
   }
 }
 
+// Compute faceMask for each cube
+for (let i = 0; i < cubes.length; i++) {
+  cubes[i].faceMask = Cube.calculateFaceMask(cubes[i].position[0], cubes[i].position[1], cubes[i].position[2], world);
+}
+
 function initBuffers(device: GPUDevice) {
-  instanceBufferData = new Float32Array(cubes.length * (4 * 4 + 2 + 2)); // 2 for padding
+  instanceBufferData = new Float32Array(cubes.length * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
 
   uniformBuffer = device.createBuffer({
+    label: "uniformBuffer",
     size: uniformBufferSize,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 
   vertexBuffer = device.createBuffer({
+    label: "vertexBuffer",
     size: Cube.cubeVertices.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
   for (let i = 0; i < cubes.length; i++) {
-    const translate = mat4.create();
-    mat4.translate(translate, translate, cubes[i].position);
+    instanceBufferData.set(cubes[i].modelMatrix, i * (4 * 4 + 2 + 1 + 1));
+    instanceBufferData.set(cubes[i].textureCoords, i * (4 * 4 + 2 + 1 + 1) + 4 * 4);
 
-    instanceBufferData.set(cubes[i].modelMatrix, i * (4 * 4 + 2 + 2));
-
-    instanceBufferData.set(cubes[i].textureCoords, i * (4 * 4 + 2 + 2) + 4 * 4);
+    instanceBufferData[i * (4 * 4 + 2 + 1 + 1) + 4 * 4 + 2] = cubes[i].faceMask;
   }
 
   instanceBuffer = device.createBuffer({
+    label: "instanceBuffer",
     size: instanceBufferData.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
@@ -124,14 +137,14 @@ function initBinding(device: GPUDevice) {
       {
         binding: 1,
         visibility: GPUShaderStage.VERTEX,
-        buffer: { type: "read-only-storage" },
+        buffer: { type: "read-only-storage", minBindingSize: instanceBufferData.byteLength },
       },
     ],
   });
 
   instanceBindGroup = device.createBindGroup({
     layout: instanceBindGroupLayout,
-    entries: [{ binding: 1, resource: { buffer: instanceBuffer } }],
+    entries: [{ binding: 1, resource: { buffer: instanceBuffer, size: instanceBufferData.byteLength } },],
   });
 
   textureBindGroupLayout = device.createBindGroupLayout({
@@ -185,7 +198,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     Math.PI / 4,
     canvas!.width / canvas!.height,
     0.1,
-    100
+    500
   );
 
   device.queue.writeBuffer(instanceBuffer, 0, instanceBufferData);

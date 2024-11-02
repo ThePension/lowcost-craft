@@ -5,10 +5,13 @@ export class Cube {
   position: vec3;
   modelMatrix: mat4;
   textureCoords: vec2;
+  faceMask: number;
 
   // Constructor
-  constructor(position: vec3, scale: vec3, textureCoords: vec2) {
+  constructor(position: vec3, scale: vec3, textureCoords: vec2, faceMask: number) {
     this.position = position;
+
+    this.faceMask = faceMask;
 
     this.modelMatrix = mat4.create();
     mat4.translate(this.modelMatrix, this.modelMatrix, position);
@@ -59,6 +62,12 @@ export class Cube {
     -0.5,  0.5,  0.5, 1.0, 0.0, -1.0,  0.0,  0.0  // Avant haut
   ]);
 
+  static FACE_FRONT = 1 << 0;
+  static FACE_BACK = 1 << 1;
+  static FACE_TOP = 1 << 2;
+  static FACE_BOTTOM = 1 << 3;
+  static FACE_RIGHT = 1 << 4;
+  static FACE_LEFT = 1 << 5;
 
 
   // prettier-ignore
@@ -71,4 +80,16 @@ export class Cube {
     20, 21, 22, 20, 22, 23  // Face gauche
   ]);
 
+  static calculateFaceMask(x: number, y: number, z: number, world: Map<string, Cube>): number {
+    let mask = 0;
+  
+    if (!world.has(`${x + 1},${y},${z}`)) mask |= this.FACE_RIGHT;
+    if (!world.has(`${x - 1},${y},${z}`)) mask |= this.FACE_LEFT;
+    if (!world.has(`${x},${y + 1},${z}`)) mask |= this.FACE_TOP;
+    if (!world.has(`${x},${y - 1},${z}`)) mask |= this.FACE_BOTTOM;
+    if (!world.has(`${x},${y},${z + 1}`)) mask |= this.FACE_FRONT;
+    if (!world.has(`${x},${y},${z - 1}`)) mask |= this.FACE_BACK;
+
+    return mask;
+  }
 }
