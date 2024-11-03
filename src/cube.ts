@@ -80,7 +80,7 @@ export class Cube {
     20, 21, 22, 20, 22, 23  // Face gauche
   ]);
 
-  static calculateFaceMask(x: number, y: number, z: number, world: Map<string, Cube>): number {
+  static calculateFaceMask(x: number, y: number, z: number, world: Set<string>): number {
     let mask = 0;
   
     if (!world.has(`${x + 1},${y},${z}`)) mask |= this.FACE_RIGHT;

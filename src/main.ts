@@ -2,13 +2,11 @@ import { mat4, vec2, vec3 } from "gl-matrix";
 import { Cube } from "./cube";
 import { Camera } from "./camera";
 import { ShaderHelper } from "./helpers/shader-helper";
-import { createNoise2D } from "simplex-noise";
+import { Chunk } from "./chunk";
 
 /*
  * Variables declaration
  */
-
-const noise2D = createNoise2D();
 
 const camera: Camera = new Camera();
 
@@ -28,67 +26,47 @@ let textureBindGroup: GPUBindGroup;
 
 let depthTexture: GPUTexture;
 
-let cubes: Cube[] = [];
 let instanceBufferData: Float32Array;
 
 let atlasTexture: GPUTexture;
 let sampler: GPUSampler;
 
-const worldWidth = 300;
-const worldMinHeight = -10;
+const CHUNK_SIZE = 16; // Taille d'un chunk en blocs
+const chunks = new Map<string, Chunk>();
 
-const amplitude = 20; // Hauteur maximale en blocs
-const frequency = 0.01; // Fréquence du bruit (plus petit pour plus doux)
+const worldSize = 10 * CHUNK_SIZE;
+
+function getChunkKey(x: number, z: number): string {
+  const chunkX = Math.floor(x / CHUNK_SIZE);
+  const chunkZ = Math.floor(z / CHUNK_SIZE);
+  return `${chunkX},${chunkZ}`;
+}
 
 // Remplit le monde avec des cubes et utilise le masque de faces
-const world = new Map<string, Cube>();
+const worldSet = new Set<string>();
 
-for (let i = 0; i < worldWidth; i++) {
-  for (let j = 0; j < worldWidth; j++) {
-    let x = i - worldWidth / 2;
-    let z = j - worldWidth / 2;
+// Generate chunks
+for (let i = 0; i < worldSize; i += CHUNK_SIZE) {
+  for (let j = 0; j < worldSize; j += CHUNK_SIZE) {
+  
+    const chunkKey = getChunkKey(i, j);
+    if (!chunks.has(chunkKey)) {
+      const chunk = new Chunk([i, j]);
+      chunk.generateChunk();
+      chunks.set(chunkKey, chunk);
 
-    // Appliquer la fréquence au bruit et multiplier par l'amplitude
-    let y = noise2D(x * frequency, z * frequency) * amplitude;
-
-    // Convertir la hauteur en entier
-    y = Math.floor(y);
-
-    // Remplir les blocs en dessous jusqu'à la hauteur minimale
-    for (let k = worldMinHeight; k <= y; k++) {
-      const position: vec3 = [x, k, z];
-
-      let textureCoords: vec2;
-
-      if (k === y) {
-        textureCoords = [4, 4]; // Herbe
-      } else if (k > y - 3) {
-        textureCoords = [2, 0]; // Terre
-      } else {
-        textureCoords = [1, 0]; // Pierre
-      }
-
-      const cube = new Cube(position, [1, 1, 1], textureCoords, 0.);
-
-      world.set(`${x},${k},${z}`, cube);
-
-      cubes.push(cube);
-    }
-
-    // If the lowest block is empty, fill it with stone
-    if (y < worldMinHeight) {
-      cubes.push(new Cube([x, worldMinHeight, z], [1, 1, 1], [2, 0], 0.));
+      // Update worldSet with chunk cubes
+      chunk.cubes.keys().forEach((key) => {
+        worldSet.add(key);
+      });
     }
   }
 }
 
-// Compute faceMask for each cube
-for (let i = 0; i < cubes.length; i++) {
-  cubes[i].faceMask = Cube.calculateFaceMask(cubes[i].position[0], cubes[i].position[1], cubes[i].position[2], world);
-}
+chunks.forEach((chunk) => chunk.calculateFaceMasks(worldSet));
 
 function initBuffers(device: GPUDevice) {
-  instanceBufferData = new Float32Array(cubes.length * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
+  instanceBufferData = new Float32Array(worldSet.size * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
 
   uniformBuffer = device.createBuffer({
     label: "uniformBuffer",
@@ -102,12 +80,20 @@ function initBuffers(device: GPUDevice) {
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
-  for (let i = 0; i < cubes.length; i++) {
-    instanceBufferData.set(cubes[i].modelMatrix, i * (4 * 4 + 2 + 1 + 1));
-    instanceBufferData.set(cubes[i].textureCoords, i * (4 * 4 + 2 + 1 + 1) + 4 * 4);
+  let instanceIndex = 0; // Pour suivre l'index d'instance dans instanceBufferData
 
-    instanceBufferData[i * (4 * 4 + 2 + 1 + 1) + 4 * 4 + 2] = cubes[i].faceMask;
-  }
+  chunks.forEach((chunk) => {
+    chunk.cubes.forEach((cube) => {
+      const baseIndex = instanceIndex * (4 * 4 + 2 + 1 + 1); // Calcule l'offset de l'instance actuelle
+
+      instanceBufferData.set(cube.modelMatrix, baseIndex);
+      instanceBufferData.set(cube.textureCoords, baseIndex + 4 * 4);
+
+      instanceBufferData[baseIndex + 4 * 4 + 2] = cube.faceMask;
+
+      instanceIndex++;
+    });
+  });
 
   instanceBuffer = device.createBuffer({
     label: "instanceBuffer",
@@ -317,7 +303,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     passEncoder.setBindGroup(0, bindGroup);
     passEncoder.setBindGroup(1, instanceBindGroup);
     passEncoder.setBindGroup(2, textureBindGroup);
-    passEncoder.drawIndexed(36, cubes.length, 0, 0, 0); // Dessine numCubes instances
+    passEncoder.drawIndexed(36, worldSet.size, 0, 0, 0); // Dessine numCubes instances
     passEncoder.end();
 
     device.queue.submit([commandEncoder.finish()]);
