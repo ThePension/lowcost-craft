@@ -1,14 +1,12 @@
-import { mat4, vec2, vec3 } from "gl-matrix";
+import { mat4, vec3 } from "gl-matrix";
 import { Cube } from "./cube";
 import { Camera } from "./camera";
 import { ShaderHelper } from "./helpers/shader-helper";
-import { createNoise2D } from "simplex-noise";
+import { Chunk } from "./chunk";
 
 /*
  * Variables declaration
  */
-
-const noise2D = createNoise2D();
 
 const camera: Camera = new Camera();
 
@@ -28,76 +26,200 @@ let textureBindGroup: GPUBindGroup;
 
 let depthTexture: GPUTexture;
 
-let cubes: Cube[] = [];
 let instanceBufferData: Float32Array;
 
 let atlasTexture: GPUTexture;
 let sampler: GPUSampler;
 
-const worldWidth = 200;
-const worldMinHeight = -10;
+const CHUNK_SIZE = 16; // Taille d'un chunk en blocs
+const chunks = new Map<string, Chunk>();
 
-const amplitude = 20; // Hauteur maximale en blocs
-const frequency = 0.01; // Fréquence du bruit (plus petit pour plus doux)
+const VIEW_DISTANCE = 10; // Nombre de chunks autour de l'utilisateur à charger
+const activeChunks = new Map<string, Chunk>();
+let numberOfVisibleCubes = 0;
 
-for (let i = 0; i < worldWidth; i++) {
-  for (let j = 0; j < worldWidth; j++) {
-    let x = i - worldWidth / 2;
-    let z = j - worldWidth / 2;
+function getChunkKey(x: number, z: number): string {
+  const chunkX = Math.floor(x / CHUNK_SIZE);
+  const chunkZ = Math.floor(z / CHUNK_SIZE);
+  return `${chunkX},${chunkZ}`;
+}
 
-    // Appliquer la fréquence au bruit et multiplier par l'amplitude
-    let y = noise2D(x * frequency, z * frequency) * amplitude;
 
-    // Convertir la hauteur en entier
-    y = Math.floor(y);
+function getChunksInViewRange(playerX: number, playerZ: number, direction: vec3): Set<string> {
+  const playerChunkX = playerX - (playerX % CHUNK_SIZE);
+  const playerChunkZ = playerZ - (playerZ % CHUNK_SIZE);
 
-    // Remplir les blocs en dessous jusqu'à la hauteur minimale
-    for (let k = worldMinHeight; k <= y; k++) {
-      const position: vec3 = [x, k, z];
+  const chunksToLoad = new Set<string>();
 
-      let textureCoords: vec2;
+  for (let dx = -VIEW_DISTANCE * CHUNK_SIZE; dx <= VIEW_DISTANCE * CHUNK_SIZE; dx += CHUNK_SIZE) {
+    for (let dz = -VIEW_DISTANCE * CHUNK_SIZE; dz <= VIEW_DISTANCE * CHUNK_SIZE; dz += CHUNK_SIZE) {
+      const chunkX = playerChunkX + dx;
+      const chunkZ = playerChunkZ + dz;
+      const chunkKey = `${chunkX},${chunkZ}`;
 
-      if (k === y) {
-        textureCoords = [4, 4]; // Herbe
-      } else if (k > y - 3) {
-        textureCoords = [2, 0]; // Terre
-      } else {
-        textureCoords = [1, 0]; // Pierre
+      // Calculer la direction vers le chunk
+      const chunkDirection = vec3.normalize(
+        vec3.create(),
+        vec3.fromValues(chunkX - playerX, 0, chunkZ - playerZ)
+      );
+
+      // Calculer l'angle entre la direction de l'utilisateur et celle du chunk
+      const dotProduct = vec3.dot(direction, chunkDirection);
+      const angle = Math.acos(dotProduct);
+
+      // Vérifier si l'angle est dans le champ de vision (45 degrés de chaque côté)
+      if (angle <= Math.PI / 6) { // 45 degrés en radians
+        chunksToLoad.add(chunkKey);
       }
-
-      cubes.push(new Cube(position, [1, 1, 1], textureCoords));
     }
+  }
 
-    // If the lowest block is empty, fill it with stone
-    if (y < worldMinHeight) {
-      cubes.push(new Cube([x, worldMinHeight, z], [1, 1, 1], [2, 0]));
+  return chunksToLoad;
+}
+
+
+
+// Remplit le monde avec des cubes et utilise le masque de faces
+const worldSet = new Set<string>();
+
+// Generate chunks
+for (let i = -VIEW_DISTANCE * CHUNK_SIZE; i < VIEW_DISTANCE * CHUNK_SIZE; i += CHUNK_SIZE) {
+  for (let j = -VIEW_DISTANCE * CHUNK_SIZE; j < VIEW_DISTANCE * CHUNK_SIZE; j += CHUNK_SIZE) {
+  
+    const chunkKey = getChunkKey(i, j);
+    if (!chunks.has(chunkKey)) {
+      const chunk = new Chunk([i, j]);
+      chunk.generateChunk();
+      chunks.set(chunkKey, chunk);
+
+      activeChunks.set(chunkKey, chunk);
+
+      // Update worldSet with chunk cubes
+      chunk.cubes.keys().forEach((key) => {
+        worldSet.add(key);
+      });
     }
   }
 }
 
+chunks.forEach((chunk) => chunk.calculateFaceMasks(worldSet));
+
+function updateInstanceBufferWithChunk(device: GPUDevice) {
+  let numberOfVisibleCubesLocal = 0;
+
+  activeChunks.forEach((chunk) => {
+    numberOfVisibleCubesLocal += [...chunk.cubes]
+    .filter(([, cube]) => cube.faceMask > 0 ).length;
+  });
+
+  if (numberOfVisibleCubesLocal === 0 || numberOfVisibleCubesLocal === numberOfVisibleCubes) {
+    return;
+  }
+
+  numberOfVisibleCubes = numberOfVisibleCubesLocal;
+
+  instanceBufferData = new Float32Array(numberOfVisibleCubesLocal * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
+
+  let instanceIndex = 0; // Pour suivre l'index d'instance dans instanceBufferData
+
+  activeChunks.forEach((chunk) => {
+    [...chunk.cubes]
+      .map(([, cube]) => cube)
+      .filter((cube) => cube.faceMask > 0 ).forEach((cube) => {
+      const baseIndex = instanceIndex * (4 * 4 + 2 + 1 + 1); // Calcule l'offset de l'instance actuelle
+
+      instanceBufferData.set(cube.modelMatrix, baseIndex);
+      instanceBufferData.set(cube.textureCoords, baseIndex + 4 * 4);
+
+      instanceBufferData[baseIndex + 4 * 4 + 2] = cube.faceMask;
+
+      instanceIndex++;
+    });
+  });
+
+  instanceBuffer = device.createBuffer({
+    label: "instanceBuffer",
+    size: instanceBufferData.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+
+  
+  instanceBindGroup = device.createBindGroup({
+    layout: instanceBindGroupLayout,
+    entries: [{ binding: 1, resource: { buffer: instanceBuffer } },],
+  });
+
+  // Transmettre les données mises à jour au GPU
+  device.queue.writeBuffer(instanceBuffer, 0, instanceBufferData);
+}
+
+
+function updateChunks(device: GPUDevice, playerX: number, playerZ: number, direction: vec3) {
+  const chunksInView = getChunksInViewRange(playerX, playerZ, direction);
+
+  // Charger les nouveaux chunks nécessaires
+  chunksInView.forEach((chunkKey) => {
+    if (!activeChunks.has(chunkKey)) {
+      // Si le chunk n'est pas chargé, crée-le et ajoute-le aux chunks actifs
+      const [chunkX, chunkZ] = chunkKey.split(",").map(Number);
+
+      const chunk = new Chunk([chunkX, chunkZ]);
+      chunk.generateChunk();
+      activeChunks.set(chunkKey, chunk);
+    }
+  });
+
+  // Décharger les chunks en dehors de la zone de vue
+  activeChunks.forEach((chunk, chunkKey) => {
+    if (!chunksInView.has(chunkKey)) {
+      activeChunks.delete(chunkKey);
+      // Suppression du chunk du buffer GPU peut être ajoutée si nécessaire
+    }
+  });
+
+  // Mettre a jour les instances des chunks actifs
+  updateInstanceBufferWithChunk(device);
+}
+
+
 function initBuffers(device: GPUDevice) {
-  instanceBufferData = new Float32Array(cubes.length * (4 * 4 + 2 + 2)); // 2 for padding
+  let numberOfCubes = 0;
+
+  activeChunks.forEach((chunk) => {
+    numberOfCubes += chunk.cubes.size;
+  });
+
+  instanceBufferData = new Float32Array(numberOfCubes * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
 
   uniformBuffer = device.createBuffer({
+    label: "uniformBuffer",
     size: uniformBufferSize,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 
   vertexBuffer = device.createBuffer({
+    label: "vertexBuffer",
     size: Cube.cubeVertices.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
-  for (let i = 0; i < cubes.length; i++) {
-    const translate = mat4.create();
-    mat4.translate(translate, translate, cubes[i].position);
+  let instanceIndex = 0; // Pour suivre l'index d'instance dans instanceBufferData
 
-    instanceBufferData.set(cubes[i].modelMatrix, i * (4 * 4 + 2 + 2));
+  activeChunks.forEach((chunk) => {
+    chunk.cubes.forEach((cube) => {
+      const baseIndex = instanceIndex * (4 * 4 + 2 + 1 + 1); // Calcule l'offset de l'instance actuelle
 
-    instanceBufferData.set(cubes[i].textureCoords, i * (4 * 4 + 2 + 2) + 4 * 4);
-  }
+      instanceBufferData.set(cube.modelMatrix, baseIndex);
+      instanceBufferData.set(cube.textureCoords, baseIndex + 4 * 4);
+
+      instanceBufferData[baseIndex + 4 * 4 + 2] = cube.faceMask;
+
+      instanceIndex++;
+    });
+  });
 
   instanceBuffer = device.createBuffer({
+    label: "instanceBuffer",
     size: instanceBufferData.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
   });
@@ -131,7 +253,7 @@ function initBinding(device: GPUDevice) {
 
   instanceBindGroup = device.createBindGroup({
     layout: instanceBindGroupLayout,
-    entries: [{ binding: 1, resource: { buffer: instanceBuffer } }],
+    entries: [{ binding: 1, resource: { buffer: instanceBuffer } },],
   });
 
   textureBindGroupLayout = device.createBindGroupLayout({
@@ -185,7 +307,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     Math.PI / 4,
     canvas!.width / canvas!.height,
     0.1,
-    100
+    500
   );
 
   device.queue.writeBuffer(instanceBuffer, 0, instanceBufferData);
@@ -264,6 +386,8 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     // Mettre à jour la position de la caméra
     camera.updateCameraPosition();
 
+    updateChunks(device, camera.position[0], camera.position[2], camera.direction); 
+
     // Mettre à jour la direction de la caméra
     camera.updateCameraDirection();
 
@@ -304,7 +428,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     passEncoder.setBindGroup(0, bindGroup);
     passEncoder.setBindGroup(1, instanceBindGroup);
     passEncoder.setBindGroup(2, textureBindGroup);
-    passEncoder.drawIndexed(36, cubes.length, 0, 0, 0); // Dessine numCubes instances
+    passEncoder.drawIndexed(36, numberOfVisibleCubes, 0, 0, 0); // Dessine numCubes instances
     passEncoder.end();
 
     device.queue.submit([commandEncoder.finish()]);
