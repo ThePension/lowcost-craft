@@ -1,4 +1,4 @@
-import { mat4, vec2, vec3 } from "gl-matrix";
+import { mat4, vec3 } from "gl-matrix";
 import { Cube } from "./cube";
 import { Camera } from "./camera";
 import { ShaderHelper } from "./helpers/shader-helper";
@@ -34,7 +34,9 @@ let sampler: GPUSampler;
 const CHUNK_SIZE = 16; // Taille d'un chunk en blocs
 const chunks = new Map<string, Chunk>();
 
-const worldSize = 10 * CHUNK_SIZE;
+const VIEW_DISTANCE = 10; // Nombre de chunks autour de l'utilisateur à charger
+const activeChunks = new Map<string, Chunk>();
+let numberOfVisibleCubes = 0;
 
 function getChunkKey(x: number, z: number): string {
   const chunkX = Math.floor(x / CHUNK_SIZE);
@@ -42,18 +44,55 @@ function getChunkKey(x: number, z: number): string {
   return `${chunkX},${chunkZ}`;
 }
 
+
+function getChunksInViewRange(playerX: number, playerZ: number, direction: vec3): Set<string> {
+  const playerChunkX = playerX - (playerX % CHUNK_SIZE);
+  const playerChunkZ = playerZ - (playerZ % CHUNK_SIZE);
+
+  const chunksToLoad = new Set<string>();
+
+  for (let dx = -VIEW_DISTANCE * CHUNK_SIZE; dx <= VIEW_DISTANCE * CHUNK_SIZE; dx += CHUNK_SIZE) {
+    for (let dz = -VIEW_DISTANCE * CHUNK_SIZE; dz <= VIEW_DISTANCE * CHUNK_SIZE; dz += CHUNK_SIZE) {
+      const chunkX = playerChunkX + dx;
+      const chunkZ = playerChunkZ + dz;
+      const chunkKey = `${chunkX},${chunkZ}`;
+
+      // Calculer la direction vers le chunk
+      const chunkDirection = vec3.normalize(
+        vec3.create(),
+        vec3.fromValues(chunkX - playerX, 0, chunkZ - playerZ)
+      );
+
+      // Calculer l'angle entre la direction de l'utilisateur et celle du chunk
+      const dotProduct = vec3.dot(direction, chunkDirection);
+      const angle = Math.acos(dotProduct);
+
+      // Vérifier si l'angle est dans le champ de vision (45 degrés de chaque côté)
+      if (angle <= Math.PI / 6) { // 45 degrés en radians
+        chunksToLoad.add(chunkKey);
+      }
+    }
+  }
+
+  return chunksToLoad;
+}
+
+
+
 // Remplit le monde avec des cubes et utilise le masque de faces
 const worldSet = new Set<string>();
 
 // Generate chunks
-for (let i = 0; i < worldSize; i += CHUNK_SIZE) {
-  for (let j = 0; j < worldSize; j += CHUNK_SIZE) {
+for (let i = -VIEW_DISTANCE * CHUNK_SIZE; i < VIEW_DISTANCE * CHUNK_SIZE; i += CHUNK_SIZE) {
+  for (let j = -VIEW_DISTANCE * CHUNK_SIZE; j < VIEW_DISTANCE * CHUNK_SIZE; j += CHUNK_SIZE) {
   
     const chunkKey = getChunkKey(i, j);
     if (!chunks.has(chunkKey)) {
       const chunk = new Chunk([i, j]);
       chunk.generateChunk();
       chunks.set(chunkKey, chunk);
+
+      activeChunks.set(chunkKey, chunk);
 
       // Update worldSet with chunk cubes
       chunk.cubes.keys().forEach((key) => {
@@ -65,8 +104,92 @@ for (let i = 0; i < worldSize; i += CHUNK_SIZE) {
 
 chunks.forEach((chunk) => chunk.calculateFaceMasks(worldSet));
 
+function updateInstanceBufferWithChunk(device: GPUDevice) {
+  let numberOfVisibleCubesLocal = 0;
+
+  activeChunks.forEach((chunk) => {
+    numberOfVisibleCubesLocal += [...chunk.cubes]
+    .filter(([, cube]) => cube.faceMask > 0 ).length;
+  });
+
+  if (numberOfVisibleCubesLocal === 0 || numberOfVisibleCubesLocal === numberOfVisibleCubes) {
+    return;
+  }
+
+  numberOfVisibleCubes = numberOfVisibleCubesLocal;
+
+  instanceBufferData = new Float32Array(numberOfVisibleCubesLocal * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
+
+  let instanceIndex = 0; // Pour suivre l'index d'instance dans instanceBufferData
+
+  activeChunks.forEach((chunk) => {
+    [...chunk.cubes]
+      .map(([, cube]) => cube)
+      .filter((cube) => cube.faceMask > 0 ).forEach((cube) => {
+      const baseIndex = instanceIndex * (4 * 4 + 2 + 1 + 1); // Calcule l'offset de l'instance actuelle
+
+      instanceBufferData.set(cube.modelMatrix, baseIndex);
+      instanceBufferData.set(cube.textureCoords, baseIndex + 4 * 4);
+
+      instanceBufferData[baseIndex + 4 * 4 + 2] = cube.faceMask;
+
+      instanceIndex++;
+    });
+  });
+
+  instanceBuffer = device.createBuffer({
+    label: "instanceBuffer",
+    size: instanceBufferData.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+
+  
+  instanceBindGroup = device.createBindGroup({
+    layout: instanceBindGroupLayout,
+    entries: [{ binding: 1, resource: { buffer: instanceBuffer } },],
+  });
+
+  // Transmettre les données mises à jour au GPU
+  device.queue.writeBuffer(instanceBuffer, 0, instanceBufferData);
+}
+
+
+function updateChunks(device: GPUDevice, playerX: number, playerZ: number, direction: vec3) {
+  const chunksInView = getChunksInViewRange(playerX, playerZ, direction);
+
+  // Charger les nouveaux chunks nécessaires
+  chunksInView.forEach((chunkKey) => {
+    if (!activeChunks.has(chunkKey)) {
+      // Si le chunk n'est pas chargé, crée-le et ajoute-le aux chunks actifs
+      const [chunkX, chunkZ] = chunkKey.split(",").map(Number);
+
+      const chunk = new Chunk([chunkX, chunkZ]);
+      chunk.generateChunk();
+      activeChunks.set(chunkKey, chunk);
+    }
+  });
+
+  // Décharger les chunks en dehors de la zone de vue
+  activeChunks.forEach((chunk, chunkKey) => {
+    if (!chunksInView.has(chunkKey)) {
+      activeChunks.delete(chunkKey);
+      // Suppression du chunk du buffer GPU peut être ajoutée si nécessaire
+    }
+  });
+
+  // Mettre a jour les instances des chunks actifs
+  updateInstanceBufferWithChunk(device);
+}
+
+
 function initBuffers(device: GPUDevice) {
-  instanceBufferData = new Float32Array(worldSet.size * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
+  let numberOfCubes = 0;
+
+  activeChunks.forEach((chunk) => {
+    numberOfCubes += chunk.cubes.size;
+  });
+
+  instanceBufferData = new Float32Array(numberOfCubes * (4 * 4 + 2 + 1 + 1)); // modelMatrix (64 octets) + textureCoords (8 octets) + faceMask (4 octets) + padding (4 octets)
 
   uniformBuffer = device.createBuffer({
     label: "uniformBuffer",
@@ -82,7 +205,7 @@ function initBuffers(device: GPUDevice) {
 
   let instanceIndex = 0; // Pour suivre l'index d'instance dans instanceBufferData
 
-  chunks.forEach((chunk) => {
+  activeChunks.forEach((chunk) => {
     chunk.cubes.forEach((cube) => {
       const baseIndex = instanceIndex * (4 * 4 + 2 + 1 + 1); // Calcule l'offset de l'instance actuelle
 
@@ -123,14 +246,14 @@ function initBinding(device: GPUDevice) {
       {
         binding: 1,
         visibility: GPUShaderStage.VERTEX,
-        buffer: { type: "read-only-storage", minBindingSize: instanceBufferData.byteLength },
+        buffer: { type: "read-only-storage" },
       },
     ],
   });
 
   instanceBindGroup = device.createBindGroup({
     layout: instanceBindGroupLayout,
-    entries: [{ binding: 1, resource: { buffer: instanceBuffer, size: instanceBufferData.byteLength } },],
+    entries: [{ binding: 1, resource: { buffer: instanceBuffer } },],
   });
 
   textureBindGroupLayout = device.createBindGroupLayout({
@@ -263,6 +386,8 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     // Mettre à jour la position de la caméra
     camera.updateCameraPosition();
 
+    updateChunks(device, camera.position[0], camera.position[2], camera.direction); 
+
     // Mettre à jour la direction de la caméra
     camera.updateCameraDirection();
 
@@ -303,7 +428,7 @@ async function init(device: GPUDevice, context: GPUCanvasContext) {
     passEncoder.setBindGroup(0, bindGroup);
     passEncoder.setBindGroup(1, instanceBindGroup);
     passEncoder.setBindGroup(2, textureBindGroup);
-    passEncoder.drawIndexed(36, worldSet.size, 0, 0, 0); // Dessine numCubes instances
+    passEncoder.drawIndexed(36, numberOfVisibleCubes, 0, 0, 0); // Dessine numCubes instances
     passEncoder.end();
 
     device.queue.submit([commandEncoder.finish()]);

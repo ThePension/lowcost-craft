@@ -1,8 +1,8 @@
 import { createNoise2D, NoiseFunction2D } from "simplex-noise";
 
 export class TerrainHelper {
-  amplitude = 20; // Hauteur maximale en blocs
-  frequency = 0.01; // Fréquence du bruit (plus petit pour plus doux)
+  static amplitude = 20; // Hauteur maximale en blocs
+  static frequency = 0.01; // Fréquence du bruit (plus petit pour plus doux)
 
   private static _instance: TerrainHelper;
   private noise2D: NoiseFunction2D;
@@ -18,8 +18,7 @@ export class TerrainHelper {
 
   getTerrainHeight(x: number, z: number): number {
     return Math.floor(
-      this.noise2D(x * this.frequency, z * this.frequency) * this.amplitude
+      this.noise2D(x * TerrainHelper.frequency, z * TerrainHelper.frequency) * TerrainHelper.amplitude
     );
   }
-  
 }

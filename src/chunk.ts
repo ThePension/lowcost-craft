@@ -22,7 +22,7 @@ export class Chunk {
 
         let y = TerrainHelper.Instance.getTerrainHeight(x, z);
 
-        for (let k = y; k > -this.chunk_size; k--) {
+        for (let k = y; k > -3; k--) {
           const position: vec3 = [x, k, z];
 
           let textureCoords: vec2;
@@ -39,8 +39,18 @@ export class Chunk {
 
           this.addCube(x, k, z, cube);
         }
+
+        // fill the last layer with with rock
+        if (y < -2) {
+          const position: vec3 = [x, -3, z];
+          const cube = new Cube(position, [1, 1, 1], [0, 0], 0.);
+          this.addCube(x, -3, z, cube);
+        }
+
       }
     }
+
+    this.calculateFaceMasks(new Set([...this.cubes.keys()]));
   }
 
   // Ajouter un cube dans le chunk
