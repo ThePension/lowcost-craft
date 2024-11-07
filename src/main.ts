@@ -34,7 +34,7 @@ let sampler: GPUSampler;
 const CHUNK_SIZE = 16; // Taille d'un chunk en blocs
 const chunks = new Map<string, Chunk>();
 
-const VIEW_DISTANCE = 10; // Nombre de chunks autour de l'utilisateur à charger
+const VIEW_DISTANCE = 5; // Nombre de chunks autour de l'utilisateur à charger
 const activeChunks = new Map<string, Chunk>();
 let numberOfVisibleCubes = 0;
 
@@ -68,13 +68,33 @@ function getChunksInViewRange(playerX: number, playerZ: number, direction: vec3)
       const angle = Math.acos(dotProduct);
 
       // Vérifier si l'angle est dans le champ de vision (45 degrés de chaque côté)
-      if (angle <= Math.PI / 6) { // 45 degrés en radians
+      if (angle <= Math.PI / 2) { // 45 degrés en radians
         chunksToLoad.add(chunkKey);
       }
     }
   }
 
   return chunksToLoad;
+}
+
+function getActiveAdjacentChunks(chunkX: number, chunkZ: number): Chunk[] {
+  var adjacentChunks: Chunk[] = [];
+
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dz = -1; dz <= 1; dz += 1) {
+      const adjacentChunkX = Math.floor(chunkX / CHUNK_SIZE) + dx;
+      const adjacentChunkZ = Math.floor(chunkZ / CHUNK_SIZE) + dz;
+
+      const adjacentChunkKey = `${adjacentChunkX},${adjacentChunkZ}`;
+
+      if (chunks.has(adjacentChunkKey)) {
+        console.log("Has value", adjacentChunkKey)
+        adjacentChunks.push(chunks.get(adjacentChunkKey));
+      }
+    }
+  }
+
+  return adjacentChunks;
 }
 
 
@@ -102,7 +122,7 @@ for (let i = -VIEW_DISTANCE * CHUNK_SIZE; i < VIEW_DISTANCE * CHUNK_SIZE; i += C
   }
 }
 
-chunks.forEach((chunk) => chunk.calculateFaceMasks(worldSet));
+// chunks.forEach((chunk) => chunk.calculateFaceMasks(worldSet));
 
 function updateInstanceBufferWithChunk(device: GPUDevice) {
   let numberOfVisibleCubesLocal = 0;
@@ -157,6 +177,20 @@ function updateInstanceBufferWithChunk(device: GPUDevice) {
 function updateChunks(device: GPUDevice, playerX: number, playerZ: number, direction: vec3) {
   const chunksInView = getChunksInViewRange(playerX, playerZ, direction);
 
+  // If chunksInView is empty, or there are no new chunks, return
+  let areChunksEqual = true;
+
+  chunksInView.forEach((chunkKey) => {
+    if (!activeChunks.has(chunkKey)) {
+      areChunksEqual = false;
+      return;
+    }
+  });
+
+  if (areChunksEqual) {
+    return;
+  }
+
   // Charger les nouveaux chunks nécessaires
   chunksInView.forEach((chunkKey) => {
     if (!activeChunks.has(chunkKey)) {
@@ -166,6 +200,28 @@ function updateChunks(device: GPUDevice, playerX: number, playerZ: number, direc
       const chunk = new Chunk([chunkX, chunkZ]);
       chunk.generateChunk();
       activeChunks.set(chunkKey, chunk);
+
+      // Update face masks of each adjacent chunk
+      // const adjacentChunks = getActiveAdjacentChunks(chunkX, chunkZ);
+
+      // worldSet.clear();
+
+      // Update worldSet with chunk cubes
+      // chunk.cubes.keys().forEach((key) => {
+      //   worldSet.add(key);
+      // });
+
+      // adjacentChunks.forEach((adjacentChunk) => {
+      //   adjacentChunk.cubes.keys().forEach((key) => {
+      //     worldSet.add(key);
+      //   });
+      // });
+
+      // chunk.calculateFaceMasks(worldSet);
+
+      // adjacentChunks.forEach((adjacentChunkKey) => {
+      //   adjacentChunkKey.calculateFaceMasks(worldSet);
+      // });
     }
   });
 
@@ -175,6 +231,20 @@ function updateChunks(device: GPUDevice, playerX: number, playerZ: number, direc
       activeChunks.delete(chunkKey);
       // Suppression du chunk du buffer GPU peut être ajoutée si nécessaire
     }
+  });
+
+  worldSet.clear();
+
+  // Update worldSet with chunk cubes
+  activeChunks.forEach((chunk) => {
+    chunk.cubes.keys().forEach((key) => {
+      worldSet.add(key);
+    });
+  });
+
+  // Update every faceMask
+  activeChunks.forEach((chunk) => {
+    chunk.calculateFaceMasks(worldSet);
   });
 
   // Mettre a jour les instances des chunks actifs

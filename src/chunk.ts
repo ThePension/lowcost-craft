@@ -50,7 +50,7 @@ export class Chunk {
       }
     }
 
-    this.calculateFaceMasks(new Set([...this.cubes.keys()]));
+    // this.calculateFaceMasks(new Set([...this.cubes.keys()]));
   }
 
   // Ajouter un cube dans le chunk
